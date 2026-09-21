@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lighthouse rules tests</title>
+  <style>
+    body { font: 14px/1.5 ui-monospace, Menlo, monospace; padding: 16px; }
+    .pass { color: #0a7a3d; }
+    .fail { color: #c0272d; font-weight: bold; }
+    #summary { font-size: 18px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <!-- Dev-only page: open in a browser to check the pure rules in script.js. -->
+  <div id="summary">Running…</div>
+  <ul id="results"></ul>
+
+  <script src="data/config.js"></script>
+  <script src="script.js"></script>
+  <script>
+    const R = window.LighthouseRules;
+    const LH = R.LIGHTHOUSE;
+    const WIN = window.LIGHTHOUSE_CONFIG.winTarget;
+    let passed = 0, failed = 0;
+
+    function test(name, fn) {
+      const li = document.createElement('li');
+      try {
+        fn();
+        passed++;
+        li.className = 'pass';
+        li.textContent = 'PASS  ' + name;
+      } catch (e) {
+        failed++;
+        li.className = 'fail';
+        li.textContent = 'FAIL  ' + name + ' — ' + e.message;
+      }
+      document.getElementById('results').appendChild(li);
+    }
+    function eq(actual, expected, label) {
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        throw new Error((label || 'value') + ': expected ' + JSON.stringify(expected) + ', got ' + JSON.stringify(actual));
+      }
+    }
+
+    // Helper: fresh game with the given scores.
+    function game(scores) {
+      const s = R.newGameState(scores.map((_, i) => 'P' + (i + 1)));
+      scores.forEach((sc, i) => { s.players[i].score = sc; });
+      return s;
+    }
+
+    /* ---- Dice ---- */
+    test('rollDice returns diceCount faces, all from dieFaces', () => {
+      for (let i = 0; i < 200; i++) {
+        const faces = R.rollDice();
+        eq(faces.length, window.LIGHTHOUSE_CONFIG.diceCount, 'length');
+        faces.forEach((f) => { if (!window.LIGHTHOUSE_CONFIG.dieFaces.includes(f)) throw new Error('bad face ' + f); });
+      }
+    });
+    test('every face (5 numbers + Lighthouse) shows up on each die position', () => {
+      const seen = [new Set(), new Set(), new Set()];
+      for (let i = 0; i < 3000; i++) R.rollDice().forEach((f, d) => seen[d].add(f));
+      seen.forEach((set, d) => eq(set.size, 6, 'distinct faces on die ' + d));
+    });
+
+    /* ---- Roll outcomes ---- */
+    test('0 Lighthouses: numbers are summed into the turn total', () => {
+      let s = game([10, 0]);
+      let r = R.applyRoll(s, [2, 3, 6]);
+      eq(r.outcome.type, 'safe');
+      eq(r.outcome.turnEnded, false);
+      eq(r.state.turnTotal, 11);
+      r = R.applyRoll(r.state, [4, 4, 5]);
+      eq(r.state.turnTotal, 24, 'accumulates across rolls');
+      eq(r.state.players[0].score, 10, 'score untouched until banked');
+    });
+    test('1 Lighthouse: only the turn total is lost, turn ends', () => {
+      let s = R.applyRoll(game([40, 0]), [6, 6, 6]).state;
+      const r = R.applyRoll(s, [LH, 5, 4]);
+      eq(r.outcome.type, 'bust');
+      eq(r.outcome.turnEnded, true);
+      eq(r.outcome.lostTurnTotal, 18);
+      eq(r.state.turnTotal, 0);
+      eq(r.state.players[0].score, 40);
+      eq(r.state.players[0].eliminated, false);
+    });
+    test('2 Lighthouses: game score resets to 0, not eliminated', () => {
+      const r = R.applyRoll(game([40, 0]), [LH, LH, 3]);
+      eq(r.outcome.type, 'reset');
+      eq(r.outcome.turnEnded, true);
+      eq(r.state.players[0].score, 0);
+      eq(r.state.players[0].eliminated, false);
+    });
+    test('3 Lighthouses: score resets and player is eliminated', () => {
+      const r = R.applyRoll(game([40, 0]), [LH, LH, LH]);
+      eq(r.outcome.type, 'shipwreck');
+      eq(r.state.players[0].score, 0);
+      eq(r.state.players[0].eliminated, true);
+    });
+    test('applyRoll does not mutate its input', () => {
+      const s = game([5, 5]);
+      const before = JSON.stringify(s);
+      R.applyRoll(s, [LH, LH, LH]);
+      eq(JSON.stringify(s), before);
+    });
+
+    /* ---- Banking and turn order ---- */
+    test('banking adds turn total to score and passes the turn', () => {
+      const s = R.applyRoll(game([10, 0, 0]), [2, 3, 4]).state;
+      eq(R.canBank(s), true);
+      const r = R.applyBank(s);
+      eq(r.state.players[0].score, 19);
+      eq(r.state.turnTotal, 0);
+      eq(r.state.currentPlayerIndex, 1);
+      eq(r.triggeredEndgame, false);
+    });
+    test('cannot bank with a turn total of 0', () => {
+      eq(R.canBank(game([0, 0])), false);
+    });
+    test('turn order wraps around', () => {
+      let s = game([0, 0]);
+      s = R.endTurn(s); eq(s.currentPlayerIndex, 1);
+      s = R.endTurn(s); eq(s.currentPlayerIndex, 0);
+    });
+    test('eliminated players are skipped in turn order', () => {
+      let s = game([0, 0, 0]);
+      s.players[1].eliminated = true;
+      s = R.endTurn(s);
+      eq(s.currentPlayerIndex, 2, 'skips index 1');
+    });
+    test('shipwreck passes the turn to the next active player', () => {
+      let s = game([0, 0, 0]);
+      s = R.applyRoll(s, [LH, LH, LH]).state;
+      s = R.endTurn(s);
+      eq(s.currentPlayerIndex, 1);
+      eq(s.players[0].eliminated, true);
+    });
+
+    /* ---- Endgame ---- */
+    test('exactly the win target does NOT trigger the endgame', () => {
+      const s = game([WIN - 10, 0]);
+      s.turnTotal = 10;
+      const r = R.applyBank(s);
+      eq(r.triggeredEndgame, false);
+      eq(r.state.endgameTriggered, false);
+    });
+    test('passing the win target triggers the endgame', () => {
+      const s = game([WIN - 10, 0]);
+      s.turnTotal = 11;
+      const r = R.applyBank(s);
+      eq(r.triggeredEndgame, true);
+      eq(r.state.endgameTriggered, true);
+      eq(r.state.gameOver, false);
+    });
+    test('every other player gets exactly one final turn, then the game ends', () => {
+      let s = game([WIN - 5, 30, 20, 10]);
+      s.turnTotal = 10;
+      s = R.applyBank(s).state;                 // P1 -> 105, endgame on
+      eq(s.currentPlayerIndex, 1);
+      eq(s.gameOver, false);
+      s.turnTotal = 5; s = R.applyBank(s).state; // P2 final turn
+      eq(s.currentPlayerIndex, 2);
+      s = R.applyRoll(s, [LH, 2, 2]).state;      // P3 busts, still uses final turn
+      s = R.endTurn(s);
+      eq(s.currentPlayerIndex, 3);
+      eq(s.gameOver, false);
+      s.turnTotal = 4; s = R.applyBank(s).state; // P4 final turn
+      eq(s.gameOver, true, 'game over after last final turn');
+      eq(s.winnerIds, ['p1']);
+    });
+    test('a final-round player can overtake the leader', () => {
+      let s = game([WIN - 5, 90]);
+      s.turnTotal = 10;
+      s = R.applyBank(s).state;                 // P1 105
+      s.turnTotal = 20;
+      s = R.applyBank(s).state;                 // P2 110
+      eq(s.gameOver, true);
+      eq(s.winnerIds, ['p2']);
+    });
+    test('final-round player wiped out by Lighthouses cannot win', () => {
+      let s = game([WIN - 5, 90]);
+      s.turnTotal = 10;
+      s = R.applyBank(s).state;
+      s = R.applyRoll(s, [LH, LH, 4]).state;    // P2 resets to 0
+      s = R.endTurn(s);
+      eq(s.gameOver, true);
+      eq(s.winnerIds, ['p1']);
+    });
+    test('players eliminated before the endgame owe no final turn', () => {
+      let s = game([WIN - 5, 0, 20]);
+      s.players[1].eliminated = true;
+      s.turnTotal = 10;
+      s = R.applyBank(s).state;
+      eq(s.currentPlayerIndex, 2, 'P2 is out, P3 is next');
+      s.turnTotal = 3; s = R.applyBank(s).state;
+      eq(s.gameOver, true);
+    });
+    test('ties produce co-winners', () => {
+      let s = game([WIN - 5, 105]);
+      s.turnTotal = 10;
+      s = R.applyBank(s).state;                 // P1 105
+      s = R.endTurn(s);                         // P2 final turn: banks nothing, stays 105
+      eq(s.gameOver, true);
+      eq(s.winnerIds, ['p1', 'p2']);
+    });
+    test('last player standing wins outright, even mid-game', () => {
+      let s = game([0, 25, 0]);
+      s.players[2].eliminated = true;
+      s.currentPlayerIndex = 0;
+      s = R.applyRoll(s, [LH, LH, LH]).state;   // P1 shipwrecks
+      s = R.endTurn(s);
+      eq(s.gameOver, true);
+      eq(s.winnerIds, ['p2']);
+    });
+    test('two-player game: shipwreck ends it immediately for the survivor', () => {
+      let s = game([0, 0]);
+      s = R.applyRoll(s, [LH, LH, LH]).state;
+      s = R.endTurn(s);
+      eq(s.gameOver, true);
+      eq(s.winnerIds, ['p2']);
+    });
+
+    /* ---- Ranking ---- */
+    test('rankPlayers sorts by score, shares rank on ties, puts eliminated last', () => {
+      const s = game([30, 50, 50, 10]);
+      s.players[3].eliminated = true;
+      const ranked = R.rankPlayers(s).map((e) => [e.player.id, e.rank]);
+      eq(ranked, [['p2', 1], ['p3', 1], ['p1', 3], ['p4', null]]);
+    });
+
+    const summary = document.getElementById('summary');
+    summary.textContent = failed === 0 ? 'ALL ' + passed + ' TESTS PASSED' : failed + ' FAILED, ' + passed + ' passed';
+    summary.className = failed === 0 ? 'pass' : 'fail';
+    document.title = summary.textContent;
+  </script>
+</body>
+</html>
