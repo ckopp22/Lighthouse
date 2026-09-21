@@ -1,7 +1,7 @@
 // Caches the app shell so the game works offline once visited/installed.
 // Bump CACHE_VERSION whenever a cached file changes, or returning visitors
 // keep seeing the old files.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = 'lighthouse-' + CACHE_VERSION;
 
 const APP_SHELL = [

@@ -20,11 +20,13 @@
     return JSON.parse(JSON.stringify(state));
   }
 
-  function newGameState(names) {
+  // `roster` items are a name string or { name, isBot }.
+  function newGameState(roster) {
     return {
-      players: names.map((name, i) => ({
+      players: roster.map((entry, i) => ({
         id: 'p' + (i + 1),
-        name: name,
+        name: typeof entry === 'string' ? entry : entry.name,
+        isBot: typeof entry === 'string' ? false : !!entry.isBot,
         score: 0,
         eliminated: false,
         tookFinalTurn: false
@@ -144,9 +146,53 @@
     return ranked;
   }
 
+  // --- Bot policy ---------------------------------------------------------
+
+  function choose(n, k) {
+    let result = 1;
+    for (let i = 1; i <= k; i++) result = (result * (n - k + i)) / i;
+    return result;
+  }
+
+  // Expected point change from rolling once more, given the turn total at
+  // stake (T) and the player's banked score (S). Computed from the config, so
+  // it stays right if the die faces or dice count are changed.
+  function expectedRollGain(turnTotal, score) {
+    const n = CONFIG.diceCount;
+    const numbers = CONFIG.dieFaces.filter((f) => f !== LIGHTHOUSE);
+    const pLighthouse = (CONFIG.dieFaces.length - numbers.length) / CONFIG.dieFaces.length;
+    const avgNumber = numbers.reduce((t, f) => t + f, 0) / (numbers.length || 1);
+    const pExactly = (k) => choose(n, k) * Math.pow(pLighthouse, k) * Math.pow(1 - pLighthouse, n - k);
+
+    const pSafe = pExactly(0);
+    const pBust = pExactly(1);
+    let pWipe = 0; // 2+ Lighthouses also lose the banked score
+    for (let k = 2; k <= n; k++) pWipe += pExactly(k);
+
+    return pSafe * n * avgNumber - (pBust + pWipe) * turnTotal - pWipe * score;
+  }
+
+  // Should the current (bot) player roll again? Always true before the first
+  // roll of a turn.
+  function botShouldRoll(state) {
+    const me = state.players[state.currentPlayerIndex];
+    const turnTotal = state.turnTotal;
+    if (turnTotal === 0) return true;
+
+    const total = me.score + turnTotal;
+    if (state.endgameTriggered) {
+      // Final turn: only a strictly higher score wins, so keep going until ahead.
+      const topOther = state.players.reduce(
+        (max, p) => (p.id === me.id || p.eliminated ? max : Math.max(max, p.score)), 0);
+      return total <= topOther;
+    }
+    if (total > CONFIG.winTarget) return false; // bank and start the final round
+    return expectedRollGain(turnTotal, me.score) > 0;
+  }
+
   window.LighthouseRules = {
     LIGHTHOUSE, newGameState, rollDice, evaluateRoll, applyRoll, applyBank,
-    canBank, endTurn, nextPlayerIndex, rankPlayers
+    canBank, endTurn, nextPlayerIndex, rankPlayers, botShouldRoll
   };
 
   // Loaded by tests.html without the app markup: stop after the rules.
@@ -159,6 +205,9 @@
   const SCREENS = ['menu', 'howto', 'setup', 'play', 'scoreboard'];
   const STORE = { sound: 'lighthouse.soundOn', players: 'lighthouse.players' };
   const TURN_END_PAUSE = 2300;
+  const BOT_NAME = 'Skipper';
+  const BOT_THINK = 900;   // pause before the bot's first roll and before it banks
+  const BOT_BETWEEN = 1100; // pause after each safe bot roll so it can be read
 
   const $ = (id) => document.getElementById(id);
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -177,7 +226,8 @@
   }
 
   let state = null;       // current game (rules state)
-  let names = [];         // names used for the current game, reused by Play Again
+  let roster = [];        // { name, isBot } entries for the current game, reused by Play Again
+  let mode = 'pass';      // setup mode: 'pass' (pass & play) or 'bot' (one human vs the bot)
   let busy = false;       // true while a roll animates or a turn-end pause runs
   let gameId = 0;         // bumped when a game starts/quits so stale timers bail out
   let soundOn = load(STORE.sound, true) !== false;
@@ -185,6 +235,7 @@
   let diceEls = [];
 
   const currentPlayer = () => state.players[state.currentPlayerIndex];
+  const displayName = (p) => (p.isBot ? '🤖 ' + p.name : p.name);
 
   /* ---------- Screens ---------- */
 
@@ -412,9 +463,13 @@
   function turnStartBanner() {
     const p = currentPlayer();
     if (state.endgameTriggered) {
-      setBanner(p.name + ', last chance!', 'Final turn. Beat ' + topScoreExcept(p.id) + ' to win.', 'warn');
+      setBanner(
+        p.name + ', last chance!',
+        p.isBot ? 'Final turn. Trying to beat ' + topScoreExcept(p.id) + '.' : 'Final turn. Beat ' + topScoreExcept(p.id) + ' to win.',
+        'warn'
+      );
     } else {
-      setBanner(p.name + "'s turn", 'Tap Roll to throw the dice.', 'info');
+      setBanner(p.name + "'s turn", p.isBot ? p.name + ' is rolling…' : 'Tap Roll to throw the dice.', 'info');
     }
   }
 
@@ -433,7 +488,7 @@
       chip.className = 'strip-player' + (i === state.currentPlayerIndex ? ' current' : '') + (p.eliminated ? ' out' : '');
       const name = document.createElement('span');
       name.className = 'strip-name';
-      name.textContent = p.name;
+      name.textContent = displayName(p);
       const score = document.createElement('span');
       score.className = 'strip-score';
       score.textContent = p.eliminated ? 'OUT' : String(p.score);
@@ -454,7 +509,8 @@
 
   function renderPlay() {
     const p = currentPlayer();
-    $('turn-name').textContent = p.name;
+    $('turn-name').textContent = displayName(p);
+    $('turn-label').textContent = p.isBot ? 'Bot is rolling' : 'Now rolling';
     $('turn-total').textContent = String(state.turnTotal);
     $('game-score').textContent = String(p.score);
     renderFinalChip();
@@ -464,15 +520,13 @@
 
   /* ---------- Game flow ---------- */
 
-  function startGame(playerNames) {
+  function startGame(entries) {
     gameId++;
-    busy = false;
-    names = playerNames;
-    state = newGameState(names);
+    roster = entries;
+    state = newGameState(roster);
     buildDice();
     showScreen('play');
-    renderPlay();
-    turnStartBanner();
+    enterTurn();
   }
 
   function quitToMenu() {
@@ -506,7 +560,7 @@
       pos.textContent = entry.rank === null ? '–' : String(entry.rank);
       const name = document.createElement('span');
       name.className = 'rank-name';
-      name.textContent = p.name;
+      name.textContent = displayName(p);
       row.append(pos, name);
 
       if (isWinner || p.eliminated) {
@@ -524,16 +578,24 @@
     cue('win');
   }
 
-  // Shows the next player's turn (or the scoreboard) after a turn ends.
+  // Shows the current player's fresh turn. Human turns wait for taps; a bot's
+  // turn locks the buttons and plays itself.
+  function enterTurn(bannerTitle, bannerDetail, bannerKind) {
+    clearDice();
+    busy = currentPlayer().isBot;
+    renderPlay();
+    if (bannerTitle) setBanner(bannerTitle, bannerDetail, bannerKind);
+    else turnStartBanner();
+    if (busy) runBotTurn();
+  }
+
+  // Moves on after a turn ends: next player's turn, or the scoreboard.
   function afterTurn(bannerTitle, bannerDetail, bannerKind) {
     if (state.gameOver) {
       finishGame();
       return;
     }
-    clearDice();
-    renderPlay();
-    if (bannerTitle) setBanner(bannerTitle, bannerDetail, bannerKind);
-    else turnStartBanner();
+    enterTurn(bannerTitle, bannerDetail, bannerKind);
   }
 
   const OUTCOME_COPY = {
@@ -542,16 +604,14 @@
     shipwreck: { title: 'Shipwrecked!', detail: (n) => n + ' is out of the game.', sound: 'shipwreck' }
   };
 
-  async function doRoll() {
-    if (busy || state.gameOver) return;
-    const id = gameId;
-    busy = true;
-    updateButtons();
+  // Rolls once for the current player; the caller has already set `busy`.
+  // Resolves 'safe' (turn continues), 'ended' (turn over and the next turn has
+  // already started) or 'stale' (the game was quit or restarted meanwhile).
+  async function performRoll(id) {
     cue('roll');
-
     const faces = rollDice();
     await animateDice(faces, id);
-    if (id !== gameId) return;
+    if (id !== gameId) return 'stale';
 
     const player = currentPlayer();
     const result = applyRoll(state, faces);
@@ -560,25 +620,37 @@
     renderPlay();
 
     if (outcome.type === 'safe') {
-      setBanner('Rolled ' + outcome.sum + '!', 'Turn total ' + state.turnTotal + '. Bank it or roll again?', 'good');
-      busy = false;
-      updateButtons();
-      return;
+      setBanner(
+        'Rolled ' + outcome.sum + '!',
+        'Turn total ' + state.turnTotal + (player.isBot ? '.' : '. Bank it or roll again?'),
+        'good'
+      );
+      return 'safe';
     }
 
     const copy = OUTCOME_COPY[outcome.type];
     setBanner(copy.title, copy.detail(player.name, outcome), 'bad');
     cue(copy.sound);
     await wait(TURN_END_PAUSE);
-    if (id !== gameId) return;
+    if (id !== gameId) return 'stale';
 
     state = endTurn(state);
-    busy = false;
     afterTurn();
+    return 'ended';
   }
 
-  function doBank() {
-    if (busy || !canBank(state)) return;
+  async function doRoll() {
+    if (busy || state.gameOver || currentPlayer().isBot) return;
+    busy = true;
+    updateButtons();
+    const result = await performRoll(gameId);
+    if (result === 'safe') {
+      busy = false;
+      updateButtons();
+    }
+  }
+
+  function bankTurn() {
     const player = currentPlayer();
     const result = applyBank(state);
     state = result.state;
@@ -592,11 +664,37 @@
     if (result.triggeredEndgame) {
       afterTurn(
         player.name + ' passed ' + CONFIG.winTarget + '!',
-        'Final round: ' + next.name + ', you get one last turn.',
+        next.isBot ? 'Final round: ' + next.name + ' gets one last turn.' : 'Final round: ' + next.name + ', you get one last turn.',
         'warn'
       );
     } else {
-      afterTurn(player.name + ' banked ' + result.banked, next.name + ", you're up!", 'good');
+      afterTurn(
+        player.name + ' banked ' + result.banked,
+        next.isBot ? next.name + ' is up!' : next.name + ", you're up!",
+        'good'
+      );
+    }
+  }
+
+  function doBank() {
+    if (busy || !canBank(state) || currentPlayer().isBot) return;
+    bankTurn();
+  }
+
+  // Plays the current bot player's whole turn. The pauses keep it readable.
+  async function runBotTurn() {
+    const id = gameId;
+    await wait(BOT_THINK);
+    while (id === gameId) {
+      if (state.turnTotal > 0 && !botShouldRoll(state)) {
+        const me = currentPlayer();
+        setBanner(me.name + ' banks ' + state.turnTotal, 'Score: ' + me.score + ' \u2192 ' + (me.score + state.turnTotal), 'good');
+        await wait(BOT_THINK);
+        if (id === gameId) bankTurn();
+        return;
+      }
+      if ((await performRoll(id)) !== 'safe') return;
+      await wait(BOT_BETWEEN);
     }
   }
 
@@ -619,10 +717,22 @@
   }
 
   function renderSetup() {
+    const vsBot = mode === 'bot';
+    const shown = vsBot ? 1 : playerCount;
+    $('mode-pass').setAttribute('aria-pressed', String(!vsBot));
+    $('mode-bot').setAttribute('aria-pressed', String(vsBot));
+    $('stepper').hidden = vsBot;
+    $('bot-hint').hidden = !vsBot;
     $('player-count').textContent = String(playerCount);
     $('btn-fewer').disabled = playerCount <= MIN_PLAYERS;
     $('btn-more').disabled = playerCount >= MAX_PLAYERS;
-    $('name-fields').querySelectorAll('label').forEach((label, i) => { label.hidden = i >= playerCount; });
+    $('name-fields').querySelectorAll('label').forEach((label, i) => { label.hidden = i >= shown; });
+    $('name-fields').querySelector('input').placeholder = vsBot ? 'Your name' : 'Player 1';
+  }
+
+  function setMode(newMode) {
+    mode = newMode;
+    renderSetup();
   }
 
   function changePlayerCount(delta) {
@@ -633,8 +743,12 @@
   function startFromSetup() {
     const inputs = Array.from($('name-fields').querySelectorAll('input'));
     const entered = inputs.map((input) => input.value.trim());
-    save(STORE.players, { count: playerCount, names: entered });
-    startGame(entered.slice(0, playerCount).map((n, i) => n || 'Player ' + (i + 1)));
+    save(STORE.players, { count: playerCount, names: entered, mode: mode });
+    if (mode === 'bot') {
+      startGame([{ name: entered[0] || 'Player 1', isBot: false }, { name: BOT_NAME, isBot: true }]);
+    } else {
+      startGame(entered.slice(0, playerCount).map((n, i) => ({ name: n || 'Player ' + (i + 1), isBot: false })));
+    }
   }
 
   /* ---------- Init ---------- */
@@ -647,6 +761,7 @@
     const saved = load(STORE.players, {});
     const savedCount = Number(saved.count);
     if (savedCount >= MIN_PLAYERS && savedCount <= MAX_PLAYERS) playerCount = savedCount;
+    if (saved.mode === 'bot') mode = 'bot';
     buildNameFields(Array.isArray(saved.names) ? saved.names : []);
     renderSetup();
     renderSound();
@@ -661,6 +776,8 @@
 
     $('btn-play').addEventListener('click', () => showScreen('setup'));
     $('btn-howto').addEventListener('click', () => showScreen('howto'));
+    $('mode-pass').addEventListener('click', () => setMode('pass'));
+    $('mode-bot').addEventListener('click', () => setMode('bot'));
     $('btn-fewer').addEventListener('click', () => changePlayerCount(-1));
     $('btn-more').addEventListener('click', () => changePlayerCount(1));
     $('btn-start').addEventListener('click', startFromSetup);
@@ -669,7 +786,7 @@
     $('btn-quit').addEventListener('click', () => {
       if (window.confirm('End this game and return to the menu?')) quitToMenu();
     });
-    $('btn-again').addEventListener('click', () => startGame(names));
+    $('btn-again').addEventListener('click', () => startGame(roster));
     $('btn-menu').addEventListener('click', quitToMenu);
 
     showScreen('menu');

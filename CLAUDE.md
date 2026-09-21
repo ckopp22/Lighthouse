@@ -24,6 +24,7 @@ Lighthouse is a push-your-luck dice game for 2–6 players on one shared device.
 ## Conventions
 
 - **Rules live in `script.js` Section 1 as pure functions** (`applyRoll`, `applyBank`, `endTurn`, `nextPlayerIndex`, `rankPlayers`, …). They take a state and return a new one, with no DOM access. Keep it that way: UI code calls them and never encodes rules. They are exposed as `window.LighthouseRules` for `tests.html`.
+- **The bot** is a player with `isBot: true`. Its strategy is the pure `botShouldRoll(state)` (Section 1, tested in `tests.html`). Its turns are driven by `runBotTurn` in the UI, which reuses `performRoll`/`bankTurn` (the same code paths as a human) and keeps `busy` true so the buttons stay locked. `enterTurn` starts a bot's turn automatically. Don't add bot-specific rules to the rules functions.
 - `applyRoll` deliberately does **not** advance the turn. The UI shows the outcome banner, waits, then calls `endTurn`.
 - Rule decisions the MDD left open: the endgame triggers when a banked score is *strictly greater* than `winTarget`. Every other non-eliminated player then gets exactly one final turn. Ties share the win. The last non-eliminated player wins outright.
 - Player names are user input: render with `textContent`/DOM APIs, never `innerHTML`.

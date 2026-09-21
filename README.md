@@ -13,7 +13,9 @@ Plain HTML, CSS and JavaScript. There is no framework, no build step and no back
 - **3 Lighthouses (Shipwrecked!):** score resets to 0 and you're out of the game.
 - Once someone banks their score **above 100**, everyone else gets one final turn. The highest score wins. If everyone else is shipwrecked, the last player afloat wins.
 
-2–6 players. The full spec is in [Lighthouse - Web App MDD.md](<Lighthouse - Web App MDD.md>).
+2–6 players sharing a device, or **vs Bot**: pick that on the setup screen to race Skipper, a computer opponent, on your own.
+
+The full spec is in [Lighthouse - Web App MDD.md](<Lighthouse - Web App MDD.md>).
 
 ## Run it locally
 
@@ -33,6 +35,8 @@ Edit [data/config.js](data/config.js):
 | `dieFaces` | `[2, 3, 4, 5, 6, 'LIGHTHOUSE']` | Faces on every die. Numbers 1–6 are drawn as pips, other numbers as digits. |
 | `winTarget` | `100` | Passing this score starts the final round. |
 | `diceCount` | `3` | Dice rolled per throw. |
+
+The bot's strategy is `botShouldRoll` in `script.js`. It rolls while the expected gain of another roll is positive (worked out from `dieFaces`/`diceCount`), so it adapts if you change the config.
 
 The Lighthouse penalties themselves (1 = lose turn, 2 = lose score, 3 = eliminated) are game logic in `script.js`, not config.
 

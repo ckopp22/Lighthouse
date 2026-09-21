@@ -41,7 +41,7 @@ A single-page HTML/CSS/JavaScript implementation of the push-your-luck dice game
 ## 3. Core Gameplay Loop
 
 1. **Main Menu** — PLAY, How to Play, Sound On/Off toggle.
-2. **Player Setup** — Choose number of players (2–6 suggested range) and optionally name each player. "Start Game" begins with Player 1's turn.
+2. **Player Setup** — Choose a mode: **Pass & Play** (2–6 players sharing the device, each optionally named) or **vs Bot** (one human against the computer opponent "Skipper"). "Start Game" begins with Player 1's turn.
 3. **Play Screen (repeats each turn):**
 
 - Current player's name/indicator is shown clearly at the top.
@@ -68,7 +68,7 @@ A single-page HTML/CSS/JavaScript implementation of the push-your-luck dice game
 
 **C. Player Setup**
 
-- Number stepper for player count (2–6), optional name field per player, "Start Game" button.
+- Mode toggle (Pass & Play / vs Bot). In Pass & Play: number stepper for player count (2–6) and an optional name field per player. In vs Bot: a single name field for the human player; the opponent is the bot "Skipper" (marked with a robot icon). "Start Game" button.
 
 **D. Play Screen (core screen)**
 
@@ -91,6 +91,7 @@ Layout must work in portrait and landscape; dice and buttons must stay comfortab
 - **Rendering:** Single-page app with JS-driven screen switching (show/hide `<section>`s or a small state machine) — no reload flicker mid-game.
 - **Dice logic:** Each roll independently randomizes each of the 3 dice across its 6 faces (5 numbers + Lighthouse) using `Math.random()`; a short CSS animation (spin/shake) plays before the result is shown so it reads as a physical roll rather than an instant swap.
 - **State management:** In-memory JS object holds current screen, player list (name, score, eliminated flag), current player index, current turn total, Lighthouse-count-so-far this roll, endgame-triggered flag + which players still owe a final turn, and sound-on/off setting. No backend, no database.
+- **Bot opponent:** In vs Bot mode the bot plays its own turns automatically (with short pauses so its rolls can be read) while the Roll/Bank buttons are locked. Its decision rule lives in `botShouldRoll` in `script.js` and is pure: it rolls while the expected gain of one more roll is positive (computed from the die faces, dice count and its banked score at risk), banks as soon as banking would take it past the win target, and on a final-round turn keeps rolling until it is strictly ahead of the best other score. There are no difficulty levels in v1.
 - **Persistence:** `localStorage` remembers the sound on/off preference between sessions; optionally remembers last-used player names/count.
 - **Sound handling:** Short sound effects (dice roll, bust, bust-severe/reset, shipwreck, win) played via `<audio>` or Web Audio API, gated by the sound toggle, cached by the service worker for offline play.
 - **Haptic feedback:** On devices/browsers that support it, a short vibration (via the Vibration API, `navigator.vibrate()`) fires alongside each sound cue for a bust (1 Lighthouse), score reset (2 Lighthouses), shipwreck (3 Lighthouses), and winning the game — a slightly longer/stronger pattern for the more severe events. Gated by the same sound toggle, with a silent no-op fallback where vibration isn't supported (e.g. desktop browsers, iOS Safari).
@@ -118,8 +119,8 @@ Layout must work in portrait and landscape; dice and buttons must stay comfortab
 ```json
 {
  "players": [
- {"id": "p1", "name": "Alex", "score": 0, "eliminated": false, "tookFinalTurn": false},
- {"id": "p2", "name": "Sam", "score": 0, "eliminated": false, "tookFinalTurn": false}
+ {"id": "p1", "name": "Alex", "isBot": false, "score": 0, "eliminated": false, "tookFinalTurn": false},
+ {"id": "p2", "name": "Skipper", "isBot": true, "score": 0, "eliminated": false, "tookFinalTurn": false}
  ],
  "currentPlayerIndex": 0,
  "turnTotal": 0,
@@ -171,6 +172,7 @@ Plain relative paths only so the same files work identically opened locally as `
 - [ ] App is installable as a PWA (manifest + service worker pass installability checks; install prompt appears) and its shell loads offline once installed.
 - [ ] Main menu → player setup → play → scoreboard all work with no page reloads.
 - [ ] Player setup accepts 2–6 players with optional names.
+- [ ] vs Bot mode: one human plays against the bot, which takes its own turns (rolling and banking) with the buttons locked, and follows all the same rules including elimination and the final round.
 - [ ] Rolling animates all 3 dice and correctly randomizes each across the 5 numbers + Lighthouse face.
 - [ ] Rolling 0 Lighthouses sums the numbers into the turn total and enables Roll Again / Bank Score.
 - [ ] Rolling exactly 1 Lighthouse resets only the turn total to 0 and passes the turn.

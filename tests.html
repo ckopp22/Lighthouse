@@ -229,6 +229,61 @@
       eq(ranked, [['p2', 1], ['p3', 1], ['p1', 3], ['p4', null]]);
     });
 
+    /* ---- Bot ---- */
+    test('roster entries can mark a player as a bot', () => {
+      const s = R.newGameState(['Ann', { name: 'Skipper', isBot: true }]);
+      eq(s.players.map((p) => p.isBot), [false, true]);
+      eq(s.players[1].name, 'Skipper');
+    });
+    test('bot always rolls at the start of a turn', () => {
+      eq(R.botShouldRoll(game([0, 0])), true);
+      eq(R.botShouldRoll(game([90, 0])), true);
+    });
+    test('bot keeps rolling on a small turn total and banks on a big one', () => {
+      let s = game([0, 0]);
+      s.turnTotal = 10; eq(R.botShouldRoll(s), true, 'T=10');
+      s.turnTotal = 20; eq(R.botShouldRoll(s), false, 'T=20');
+    });
+    test('bot is more cautious the more score it has to lose', () => {
+      const s = game([60, 0]);
+      s.turnTotal = 10;
+      eq(R.botShouldRoll(s), false, 'banks 10 when holding 60');
+    });
+    test('bot banks once it would pass the win target', () => {
+      const s = game([95, 0]);
+      s.turnTotal = 8;
+      eq(R.botShouldRoll(s), false);
+    });
+    test('bot on a final turn keeps rolling until strictly ahead', () => {
+      let s = game([WIN + 5, 60]);
+      s.endgameTriggered = true;
+      s.players[0].tookFinalTurn = true;
+      s.currentPlayerIndex = 1;
+      s.turnTotal = 30; eq(R.botShouldRoll(s), true, '90 vs 105');
+      s.turnTotal = 45; eq(R.botShouldRoll(s), true, '105 only ties 105, so keep going');
+    });
+    test('bot on a final turn banks the moment it is ahead', () => {
+      let s = game([WIN + 5, 60]);
+      s.endgameTriggered = true;
+      s.players[0].tookFinalTurn = true;
+      s.currentPlayerIndex = 1;
+      s.turnTotal = 46;
+      eq(R.botShouldRoll(s), false, '106 vs 105');
+    });
+    test('bot-vs-bot games always finish with a winner', () => {
+      for (let g = 0; g < 300; g++) {
+        let s = R.newGameState([{ name: 'A', isBot: true }, { name: 'B', isBot: true }, { name: 'C', isBot: true }]);
+        let steps = 0;
+        while (!s.gameOver) {
+          if (++steps > 5000) throw new Error('game ' + g + ' did not finish');
+          if (s.turnTotal > 0 && !R.botShouldRoll(s)) { s = R.applyBank(s).state; continue; }
+          const r = R.applyRoll(s, R.rollDice());
+          s = r.outcome.turnEnded ? R.endTurn(r.state) : r.state;
+        }
+        if (s.winnerIds.length === 0) throw new Error('game ' + g + ' has no winner');
+      }
+    });
+
     const summary = document.getElementById('summary');
     summary.textContent = failed === 0 ? 'ALL ' + passed + ' TESTS PASSED' : failed + ' FAILED, ' + passed + ' passed';
     summary.className = failed === 0 ? 'pass' : 'fail';
