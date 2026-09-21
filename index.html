@@ -57,7 +57,7 @@
         <li><strong>3 Lighthouses &ndash; Shipwrecked!</strong> Your score resets to 0 and you're out of the game.</li>
       </ul>
       <p><strong>Ending:</strong> when a player banks their way past <span data-config="winTarget">100</span>, every other player gets one final turn to catch up. The highest score then wins. If everyone else is shipwrecked, the last ship afloat wins.</p>
-      <p><strong>Playing solo?</strong> Choose <em>vs Bot</em> when setting up to race Skipper, a bot that rolls and banks on its own.</p>
+      <p><strong>Playing solo?</strong> Set the player count to <em>1</em> when setting up to race Skipper, a bot that rolls and banks on its own.</p>
     </div>
     <button class="btn btn-secondary" type="button" data-goto="menu">Back</button>
   </section>
@@ -66,16 +66,12 @@
   <section id="setup" class="screen" hidden>
     <h2 class="screen-title">Who's playing?</h2>
     <div class="card">
-      <div class="mode-toggle" role="group" aria-label="Game mode">
-        <button id="mode-pass" class="mode-btn" type="button" aria-pressed="true">Pass &amp; Play</button>
-        <button id="mode-bot" class="mode-btn" type="button" aria-pressed="false">vs Bot</button>
-      </div>
       <div id="stepper" class="stepper" role="group" aria-label="Number of players">
         <button id="btn-fewer" class="icon-btn" type="button" aria-label="Fewer players">&minus;</button>
-        <div class="stepper-value"><span id="player-count">2</span> <small>players</small></div>
+        <div class="stepper-value"><span id="player-count">2</span> <small id="player-label">players</small></div>
         <button id="btn-more" class="icon-btn" type="button" aria-label="More players">+</button>
       </div>
-      <p id="bot-hint" class="hint" hidden>You'll play head-to-head against Skipper, the bot.</p>
+      <p id="bot-hint" class="hint" hidden>Solo game: you'll play head-to-head against Skipper, the bot.</p>
       <div id="name-fields" class="name-fields"></div>
     </div>
     <div class="stack">

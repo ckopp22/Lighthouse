@@ -13,7 +13,7 @@ Plain HTML, CSS and JavaScript. There is no framework, no build step and no back
 - **3 Lighthouses (Shipwrecked!):** score resets to 0 and you're out of the game.
 - Once someone banks their score **above 100**, everyone else gets one final turn. The highest score wins. If everyone else is shipwrecked, the last player afloat wins.
 
-2–6 players sharing a device, or **vs Bot**: pick that on the setup screen to race Skipper, a computer opponent, on your own.
+2–6 players share a device. Set the player count to **1** on the setup screen to play solo against Skipper, a computer opponent.
 
 The full spec is in [Lighthouse - Web App MDD.md](<Lighthouse - Web App MDD.md>).
 

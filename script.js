@@ -9,7 +9,7 @@
 
   const CONFIG = window.LIGHTHOUSE_CONFIG;
   const LIGHTHOUSE = 'LIGHTHOUSE';
-  const MIN_PLAYERS = 2;
+  const MIN_PLAYERS = 1; // setup only: 1 player means a solo game against the bot
   const MAX_PLAYERS = 6;
 
   /* ======================================================================
@@ -227,7 +227,6 @@
 
   let state = null;       // current game (rules state)
   let roster = [];        // { name, isBot } entries for the current game, reused by Play Again
-  let mode = 'pass';      // setup mode: 'pass' (pass & play) or 'bot' (one human vs the bot)
   let busy = false;       // true while a roll animates or a turn-end pause runs
   let gameId = 0;         // bumped when a game starts/quits so stale timers bail out
   let soundOn = load(STORE.sound, true) !== false;
@@ -427,10 +426,15 @@
 
     return new Promise((resolve) => {
       const timer = setInterval(() => {
+        if (id !== gameId) {
+          clearInterval(timer);
+          resolve();
+          return;
+        }
         const elapsed = performance.now() - start;
         diceEls.forEach((die, i) => {
           if (settled[i]) return;
-          if (id !== gameId || elapsed >= settleAt + i * stagger) {
+          if (elapsed >= settleAt + i * stagger) {
             settled[i] = true;
             die.classList.remove('rolling');
             die.classList.add('landed');
@@ -693,6 +697,7 @@
         if (id === gameId) bankTurn();
         return;
       }
+      setBanner(currentPlayer().name + ' is rolling\u2026', 'Turn total ' + state.turnTotal, 'info');
       if ((await performRoll(id)) !== 'safe') return;
       await wait(BOT_BETWEEN);
     }
@@ -716,23 +721,17 @@
     }
   }
 
+  // One player means a solo game against the bot.
+  const vsBot = () => playerCount === 1;
+
   function renderSetup() {
-    const vsBot = mode === 'bot';
-    const shown = vsBot ? 1 : playerCount;
-    $('mode-pass').setAttribute('aria-pressed', String(!vsBot));
-    $('mode-bot').setAttribute('aria-pressed', String(vsBot));
-    $('stepper').hidden = vsBot;
-    $('bot-hint').hidden = !vsBot;
+    $('bot-hint').hidden = !vsBot();
     $('player-count').textContent = String(playerCount);
+    $('player-label').textContent = playerCount === 1 ? 'player' : 'players';
     $('btn-fewer').disabled = playerCount <= MIN_PLAYERS;
     $('btn-more').disabled = playerCount >= MAX_PLAYERS;
-    $('name-fields').querySelectorAll('label').forEach((label, i) => { label.hidden = i >= shown; });
-    $('name-fields').querySelector('input').placeholder = vsBot ? 'Your name' : 'Player 1';
-  }
-
-  function setMode(newMode) {
-    mode = newMode;
-    renderSetup();
+    $('name-fields').querySelectorAll('label').forEach((label, i) => { label.hidden = i >= playerCount; });
+    $('name-fields').querySelector('input').placeholder = vsBot() ? 'Your name' : 'Player 1';
   }
 
   function changePlayerCount(delta) {
@@ -743,8 +742,8 @@
   function startFromSetup() {
     const inputs = Array.from($('name-fields').querySelectorAll('input'));
     const entered = inputs.map((input) => input.value.trim());
-    save(STORE.players, { count: playerCount, names: entered, mode: mode });
-    if (mode === 'bot') {
+    save(STORE.players, { count: playerCount, names: entered });
+    if (vsBot()) {
       startGame([{ name: entered[0] || 'Player 1', isBot: false }, { name: BOT_NAME, isBot: true }]);
     } else {
       startGame(entered.slice(0, playerCount).map((n, i) => ({ name: n || 'Player ' + (i + 1), isBot: false })));
@@ -761,7 +760,6 @@
     const saved = load(STORE.players, {});
     const savedCount = Number(saved.count);
     if (savedCount >= MIN_PLAYERS && savedCount <= MAX_PLAYERS) playerCount = savedCount;
-    if (saved.mode === 'bot') mode = 'bot';
     buildNameFields(Array.isArray(saved.names) ? saved.names : []);
     renderSetup();
     renderSound();
@@ -776,8 +774,6 @@
 
     $('btn-play').addEventListener('click', () => showScreen('setup'));
     $('btn-howto').addEventListener('click', () => showScreen('howto'));
-    $('mode-pass').addEventListener('click', () => setMode('pass'));
-    $('mode-bot').addEventListener('click', () => setMode('bot'));
     $('btn-fewer').addEventListener('click', () => changePlayerCount(-1));
     $('btn-more').addEventListener('click', () => changePlayerCount(1));
     $('btn-start').addEventListener('click', startFromSetup);

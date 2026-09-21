@@ -129,31 +129,8 @@ body {
 
 /* ---------- Setup ---------- */
 
-.mode-toggle {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin-bottom: 16px;
-  padding: 4px;
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.25);
-}
-.mode-btn {
-  min-height: var(--tap);
-  padding: 8px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--white);
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-.mode-btn[aria-pressed="true"] { background: var(--gold); color: var(--ink); }
-.mode-btn:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
-
 .hint { margin: 0 0 12px; text-align: center; color: var(--sand); opacity: 0.9; }
-.hint[hidden], .stepper[hidden] { display: none; }
+.hint[hidden] { display: none; }
 
 .stepper { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .stepper-value { font-size: 2rem; font-weight: 800; }
